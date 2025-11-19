@@ -1,0 +1,145 @@
+@import "tailwindcss";
+
+/* Primary Font: Inter (like DODOswap), Secondary: Manrope, Fallback: PingFang SC, Microsoft YaHei */
+* {
+  font-family: var(--font-inter), var(--font-manrope), "PingFang SC", "Microsoft YaHei", sans-serif;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-inter), var(--font-manrope), "PingFang SC", "Microsoft YaHei", sans-serif;
+  background-color: #FAFAFA;
+  color: #000000;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Ensure all text elements use the font stack */
+h1, h2, h3, h4, h5, h6, p, span, div, button, input, textarea, select, label, a {
+  font-family: var(--font-inter), var(--font-manrope), "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* Primary Background */
+.bg-primary {
+  background-color: #252831;
+}
+
+/* Secondary Background */
+.bg-secondary {
+  background-color: #33363F;
+}
+
+/* Secondary Background 2 */
+.bg-secondary-2 {
+  background-color: #41454F;
+}
+
+/* Tertiary Background */
+.bg-tertiary {
+  background-color: #212635;
+}
+
+/* Header Background */
+.bg-header {
+  background-color: #252831;
+}
+
+/* Border Color */
+.border-custom {
+  border-color: #D1D5DB;
+}
+
+/* Border Color 2 */
+.border-custom-2 {
+  border-color: #454851;
+  border-width: 1px;
+}
+
+/* Hover Background */
+.hover-bg-custom:hover {
+  background-color: #5C5E65 !important;
+}
+
+/* Active Button Background */
+.bg-active {
+  background-color: #FFE804;
+}
+
+/* Primary Button - Green for ArcSwap */
+.btn-primary {
+  background-color: #10b981;
+  border-radius: 8px;
+  border: none;
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background-color: #059669;
+}
+
+/* Transparent Button */
+.btn-transparent {
+  border-radius: 8px;
+  border: 1px solid #E3E3E3;
+  background-color: transparent;
+}
+
+.btn-transparent:hover {
+  background-color: #f5f5f5;
+  border-radius: 8px;
+  border: 1px solid #E3E3E3;
+}
+
+/* Inactive Button */
+.btn-inactive {
+  background-color: #10b981;
+  opacity: 0.5;
+  border-radius: 8px;
+  border: 1px solid #E3E3E3;
+}
+
+.btn-inactive:hover {
+  background-color: #10b981;
+  opacity: 0.7;
+  border-radius: 8px;
+  border: 1px solid #E3E3E3;
+}
+
+/* Remove spinner from number inputs */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Color Standards */
+.text-white {
+  color: #ffffff;
+}
+
+.text-black {
+  color: #000000;
+}
+
+.text-gray {
+  color: #9ca3af;
+}
+
+/* Card styles */
+.card {
+  background-color: #FFFFFF;
+  border: 1px solid #D1D5DB;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.card-dark {
+  background-color: #212635;
+  border: 1px solid #374151;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
