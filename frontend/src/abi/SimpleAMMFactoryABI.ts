@@ -5,9 +5,35 @@
 export const SimpleAMMFactoryABI = {
   "abi": [
     {
-      "inputs": [],
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_feeToSetter",
+          "type": "address"
+        }
+      ],
       "stateMutability": "nonpayable",
       "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "Forbidden",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "IdenticalAddresses",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "PairExists",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ZeroAddress",
+      "type": "error"
     },
     {
       "anonymous": false,
@@ -33,7 +59,7 @@ export const SimpleAMMFactoryABI = {
         {
           "indexed": false,
           "internalType": "uint256",
-          "name": "index",
+          "name": "",
           "type": "uint256"
         }
       ],
@@ -97,6 +123,32 @@ export const SimpleAMMFactoryABI = {
       "type": "function"
     },
     {
+      "inputs": [],
+      "name": "feeTo",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "feeToSetter",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [
         {
           "internalType": "address",
@@ -121,16 +173,29 @@ export const SimpleAMMFactoryABI = {
       "type": "function"
     },
     {
-      "inputs": [],
-      "name": "owner",
-      "outputs": [
+      "inputs": [
         {
           "internalType": "address",
-          "name": "",
+          "name": "_feeTo",
           "type": "address"
         }
       ],
-      "stateMutability": "view",
+      "name": "setFeeTo",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_feeToSetter",
+          "type": "address"
+        }
+      ],
+      "name": "setFeeToSetter",
+      "outputs": [],
+      "stateMutability": "nonpayable",
       "type": "function"
     }
   ]

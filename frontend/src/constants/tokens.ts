@@ -6,7 +6,8 @@
 
 import { getUSDCAddress } from "@/abi/USDCAddresses";
 import { getEURCAddress } from "@/abi/EURCAddresses";
-import { getRouterAddress, SimpleAMMRouterAddresses } from "@/abi/SimpleAMMRouterAddresses";
+import { getRouterAddress } from "@/abi/SimpleAMMRouterAddresses";
+import { getFactoryAddress } from "@/abi/SimpleAMMFactoryAddresses";
 import { AMMPairs } from "@/abi/AMMPairs";
 
 // Chain ID
@@ -14,7 +15,7 @@ export const ARC_CHAIN_ID = 5042002;
 
 // DEX Contract Addresses (from abi files)
 export const ROUTER_ADDRESS = getRouterAddress(ARC_CHAIN_ID);
-export const FACTORY_ADDRESS = SimpleAMMRouterAddresses[ARC_CHAIN_ID.toString() as keyof typeof SimpleAMMRouterAddresses]?.factory as `0x${string}`;
+export const FACTORY_ADDRESS = getFactoryAddress(ARC_CHAIN_ID);
 
 // Quote Token (EURC) - from abi file
 export const QUOTE_SYMBOL = "EURC";

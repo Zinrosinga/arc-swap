@@ -11,7 +11,7 @@ async function main() {
   console.log("Deploying SimpleAMMFactory with:", deployer.address);
 
   const Factory = await hardhatEthers.getContractFactory("SimpleAMMFactory");
-  const factory = await Factory.deploy();
+  const factory = await Factory.deploy(deployer.address);
   await factory.waitForDeployment();
   const factoryAddress = await factory.getAddress();
   console.log(`✅ SimpleAMMFactory deployed to: ${factoryAddress}`);

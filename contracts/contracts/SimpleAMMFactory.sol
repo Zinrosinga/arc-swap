@@ -1,40 +1,54 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
 import "./SimpleAMMPair.sol";
 
 contract SimpleAMMFactory {
+    error IdenticalAddresses();
+    error PairExists();
+    error ZeroAddress();
+    error Forbidden();
+
+    address public feeTo;
+    address public feeToSetter;
+
     mapping(address => mapping(address => address)) public getPair;
     address[] public allPairs;
 
-    address public immutable owner;
+    event PairCreated(address indexed token0, address indexed token1, address pair, uint256);
 
-    event PairCreated(address indexed token0, address indexed token1, address pair, uint256 index);
-
-    modifier onlyOwner() {
-        require(msg.sender == owner, "NOT_OWNER");
-        _;
-    }
-
-    constructor() {
-        owner = msg.sender;
-    }
-
-    function createPair(address tokenA, address tokenB) external returns (address pair) {
-        require(tokenA != tokenB, "IDENTICAL_ADDRESSES");
-        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-        require(getPair[token0][token1] == address(0), "PAIR_EXISTS");
-
-        pair = address(new SimpleAMMPair(token0, token1));
-        getPair[token0][token1] = pair;
-        getPair[token1][token0] = pair;
-        allPairs.push(pair);
-
-        emit PairCreated(token0, token1, pair, allPairs.length);
+    constructor(address _feeToSetter) {
+        feeToSetter = _feeToSetter;
     }
 
     function allPairsLength() external view returns (uint256) {
         return allPairs.length;
     }
-}
 
+    function createPair(address tokenA, address tokenB) external returns (address pair) {
+        if (tokenA == tokenB) revert IdenticalAddresses();
+        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        if (token0 == address(0)) revert ZeroAddress();
+        if (getPair[token0][token1] != address(0)) revert PairExists();
+
+        // Deterministic deployment using CREATE2 (via salt)
+        bytes32 salt = keccak256(abi.encodePacked(token0, token1));
+        pair = address(new SimpleAMMPair{salt: salt}(token0, token1));
+
+        getPair[token0][token1] = pair;
+        getPair[token1][token0] = pair; // populate mapping in both directions
+        allPairs.push(pair);
+        
+        emit PairCreated(token0, token1, pair, allPairs.length);
+    }
+
+    function setFeeTo(address _feeTo) external {
+        if (msg.sender != feeToSetter) revert Forbidden();
+        feeTo = _feeTo;
+    }
+
+    function setFeeToSetter(address _feeToSetter) external {
+        if (msg.sender != feeToSetter) revert Forbidden();
+        feeToSetter = _feeToSetter;
+    }
+}

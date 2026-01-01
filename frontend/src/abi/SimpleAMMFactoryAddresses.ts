@@ -6,8 +6,8 @@ export const SimpleAMMFactoryAddresses = {
   "5042002": {
     chainId: 5042002,
     chainName: "arc",
-    address: "0xfd4D139C593C5a0126bD9e63Ec9B7052F4EB9Da3" as const,
-    owner: "0xafE6d8dD18003a7471ddFBAf4cfcb6CB1Bb62b66" as const
+    address: "0xf0C6f25922eCc7938Bcaf106e12Ed734928930A0" as const,
+    owner: "0x0Ee56E2eAE57C190CD8F04e06A21d2BfF46661dA" as const
   }
 } as const;
 

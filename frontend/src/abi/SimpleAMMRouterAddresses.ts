@@ -6,8 +6,8 @@ export const SimpleAMMRouterAddresses = {
   "5042002": {
     chainId: 5042002,
     chainName: "arc",
-    address: "0xE35d0314E78438D5620ae4391b85F1E8935fc09E" as const,
-    factory: "0xfd4D139C593C5a0126bD9e63Ec9B7052F4EB9Da3" as const
+    address: "0x5682AD3307a634F9cfD8a5e00C386ae822fd9A26" as const,
+    factory: "0xf0C6f25922eCc7938Bcaf106e12Ed734928930A0" as const
   }
 } as const;
 

@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useBalance } from "wagmi";
 import { formatUnits } from "viem";
 import toast from "react-hot-toast";
-import { TOKENS, ARC_CHAIN_ID } from "@/constants/tokens";
+import { TOKENS } from "@/constants/tokens";
 
 const ARC_EXPLORER_URL = 'https://testnet.arcscan.app';
 
@@ -167,9 +167,9 @@ export default function Faucet() {
       if (isLoading) return "Loading...";
       if (!balanceData) return "0.00";
       const formatted = formatUnits(balance, token.decimals);
-      return parseFloat(formatted).toLocaleString(undefined, { 
-        minimumFractionDigits: 2, 
-        maximumFractionDigits: 2 
+      return parseFloat(formatted).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
       });
     }, [isLoading, balanceData, balance, token.decimals]);
 
@@ -202,10 +202,10 @@ export default function Faucet() {
             {isExternalFaucet
               ? "Claim"
               : isAlreadyClaimed
-              ? "Claimed"
-              : isTxPending
-              ? "Claiming..."
-              : "Claim"}
+                ? "Claimed"
+                : isTxPending
+                  ? "Claiming..."
+                  : "Claim"}
           </button>
         </td>
       </tr>

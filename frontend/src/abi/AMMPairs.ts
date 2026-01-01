@@ -7,49 +7,49 @@ export const AMMPairs = {
     tokenSymbol: "NBC",
     tokenAddress: "0x886dC8c87279E54DD5dA4067c8aF1C82c347f00F",
     quoteAddress: "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
-    pairAddress: "0xEC12cb24c65bd9860E5218a3BCC2Cc3285ea91f0"
+    pairAddress: "0x1eDa3e7A3aDa7f34Eef5D81d236F67FA3A0368e8"
   },
   "SDR/EURC": {
     tokenSymbol: "SDR",
     tokenAddress: "0xC5fa3de685C794ef54805171C035b903C5dda818",
     quoteAddress: "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
-    pairAddress: "0xF8619246ee781e8e692eA21Ab4f4126D4Dea6491"
+    pairAddress: "0xC09047BD81B8400C12B136aFCCF7289607D1e2F2"
   },
   "PHL/EURC": {
     tokenSymbol: "PHL",
     tokenAddress: "0x7dcd7E817cEef6Cd6a499Ff81A6cA6667710F3E4",
     quoteAddress: "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
-    pairAddress: "0x995F2094DCf2cC44ea1A192bfe2F7597F4fA61a4"
+    pairAddress: "0x45CEF97d0291b59176fD4123f79c010a2519B04f"
   },
   "QBT/EURC": {
     tokenSymbol: "QBT",
     tokenAddress: "0x6D8136FF55D6aB192709F61B8cDb91a3293ccf6d",
     quoteAddress: "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
-    pairAddress: "0x8cD91ACE8a0654CE42379D1aB6f882D47dAb6e72"
+    pairAddress: "0xF89766C2B6206169ca173B4a9f169bF95eC24196"
   },
   "NBC/USDC": {
     tokenSymbol: "NBC",
     tokenAddress: "0x886dC8c87279E54DD5dA4067c8aF1C82c347f00F",
     quoteAddress: "0x3600000000000000000000000000000000000000",
-    pairAddress: "0x245aa8dEff2C4C7E3395eb4F3221078b55f32192"
+    pairAddress: "0xDE553FdAe635B88Ee2a734FbDa2A15B28A916c62"
   },
   "SDR/USDC": {
     tokenSymbol: "SDR",
     tokenAddress: "0xC5fa3de685C794ef54805171C035b903C5dda818",
     quoteAddress: "0x3600000000000000000000000000000000000000",
-    pairAddress: "0x825Fad8E028e1857Ec3Fa517341133EC936F949E"
+    pairAddress: "0xD9b347d1AacBeAe66b5FE69e0F7a8aE56a4fc043"
   },
   "PHL/USDC": {
     tokenSymbol: "PHL",
     tokenAddress: "0x7dcd7E817cEef6Cd6a499Ff81A6cA6667710F3E4",
     quoteAddress: "0x3600000000000000000000000000000000000000",
-    pairAddress: "0xa6572490E624B568f990BBB2e22f41a97B8d30DC"
+    pairAddress: "0x1707Fb2740a18F636bf2BdEb73179ec335d99039"
   },
   "QBT/USDC": {
     tokenSymbol: "QBT",
     tokenAddress: "0x6D8136FF55D6aB192709F61B8cDb91a3293ccf6d",
     quoteAddress: "0x3600000000000000000000000000000000000000",
-    pairAddress: "0x4D65BB493e1a8634c932FD854f32CF4C0d796840"
+    pairAddress: "0x09Bc3d77885A1b3945C4dEF8Ca02eC9323CBae83"
   },
   "NBC/SDR": {
     tokenSymbol: "NBC",

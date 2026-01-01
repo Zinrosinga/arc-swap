@@ -1,15 +1,15 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import { formatUnits, parseUnits } from "viem";
+import { getAddress, formatUnits, parseUnits } from "viem";
 import { useAccount, useReadContract, useReadContracts, useWriteContract, useWaitForTransactionReceipt, useBalance } from "wagmi";
 import toast from "react-hot-toast";
 
-import { ROUTER_ADDRESS, FACTORY_ADDRESS, QUOTE_ADDRESS, QUOTE_DECIMALS, QUOTE_SYMBOL, QUOTE_TOKEN, DEX_TOKEN_OPTIONS, TOKENS, getTokenConfigByAddress } from "@/constants/tokens";
+import { ROUTER_ADDRESS, FACTORY_ADDRESS, getTokenConfigByAddress } from "@/constants/tokens";
 
 const ARC_EXPLORER_URL = 'https://testnet.arcscan.app';
 
-type Reserves = readonly [bigint, bigint] | [bigint, bigint];
+type Reserves = readonly [bigint, bigint, number];
 
 const FACTORY_ABI = [
   {
@@ -55,7 +55,7 @@ const PAIR_ABI = [
   {
     inputs: [],
     name: "getReserves",
-    outputs: [{ type: "uint112" }, { type: "uint112" }],
+    outputs: [{ type: "uint112" }, { type: "uint112" }, { type: "uint32" }],
     stateMutability: "view",
     type: "function",
   },
@@ -75,12 +75,16 @@ const ROUTER_ABI = [
       { name: "tokenB", type: "address" },
       { name: "amountADesired", type: "uint256" },
       { name: "amountBDesired", type: "uint256" },
+      { name: "amountAMin", type: "uint256" },
+      { name: "amountBMin", type: "uint256" },
+      { name: "to", type: "address" },
+      { name: "deadline", type: "uint256" },
     ],
     name: "addLiquidity",
     outputs: [
-      { name: "liquidity", type: "uint256" },
       { name: "amountA", type: "uint256" },
       { name: "amountB", type: "uint256" },
+      { name: "liquidity", type: "uint256" },
     ],
     stateMutability: "nonpayable",
     type: "function",
@@ -90,6 +94,10 @@ const ROUTER_ABI = [
       { name: "tokenA", type: "address" },
       { name: "tokenB", type: "address" },
       { name: "liquidity", type: "uint256" },
+      { name: "amountAMin", type: "uint256" },
+      { name: "amountBMin", type: "uint256" },
+      { name: "to", type: "address" },
+      { name: "deadline", type: "uint256" },
     ],
     name: "removeLiquidity",
     outputs: [
@@ -129,213 +137,111 @@ const ERC20_ALLOWANCE_ABI = [
 
 // Hook to fetch all pairs dynamically from Factory
 function useAllPairs() {
-  // Poll allPairsLength every 30 seconds (Uniswap style - prevents spam from event watcher)
-  const { data: pairsLength, refetch: refetchAll } = useReadContract({
+  // 1. Get total number of pairs
+  const { data: pairsLength, isError: lengthError } = useReadContract({
     address: FACTORY_ADDRESS,
     abi: FACTORY_ABI,
     functionName: "allPairsLength",
     query: {
-      refetchInterval: 30000, // 30s polling - stable, no spam
+      refetchInterval: 15000, // Faster polling for testnet
+      staleTime: 10000,
     },
   });
 
-  // Create array of indices to query
-  const indices = useMemo(() => {
-    if (!pairsLength || pairsLength === BigInt(0)) return [];
-    const length = Number(pairsLength);
-    return Array.from({ length }, (_, i) => i);
+  // 2. Map indices to contract calls
+  const pairIndices = useMemo(() => {
+    const len = Number(pairsLength || 0);
+    return Array.from({ length: len }, (_, i) => BigInt(i));
   }, [pairsLength]);
 
-  // Query all pair addresses (only refetch when length changes or on mount)
-  const pairAddressQueries = useReadContracts({
-    contracts: indices.map((index) => ({
+  // 3. Fetch all pair addresses in one batch
+  const { data: pairAddressesData, isLoading: loadingAddresses, isError: addressesError } = useReadContracts({
+    contracts: pairIndices.map((index) => ({
       address: FACTORY_ADDRESS,
       abi: FACTORY_ABI,
       functionName: "allPairs",
-      args: [BigInt(index)],
+      args: [index],
     })),
-    query: { 
-      enabled: indices.length > 0,
-      // Only refetch when length changes, not on interval
-      refetchInterval: false,
-      retry: 3, // Retry up to 3 times on failure
-      retryDelay: 1000, // Wait 1 second between retries
-      placeholderData: (previousData) => previousData, // Keep old data when refetching
+    query: {
+      enabled: pairIndices.length > 0,
+      staleTime: 60000, // Addresses don't change often
     },
   });
 
-  // Refetch pairs when allPairsLength changes (triggered by event or manual refetch)
-  // Use a ref to track previous length to avoid unnecessary refetches on mount
-  const prevPairsLengthRef = useRef<bigint | undefined>(undefined);
-  const refetchPairsRef = useRef(pairAddressQueries.refetch);
-  refetchPairsRef.current = pairAddressQueries.refetch;
-  
-  useEffect(() => {
-    if (pairsLength === undefined) return;
-    
-    const prev = prevPairsLengthRef.current;
-    const current = pairsLength;
-    
-    // No change → do nothing
-    if (prev !== undefined && prev === current) return;
-    
-    // Update previous length
-    prevPairsLengthRef.current = current;
-    
-    // Only refetch if > 0 (avoid pointless calls)
-    if (Number(current) > 0) {
-      refetchPairsRef.current();
-    }
-  }, [pairsLength]);
-
-  // Extract pair addresses (stable reference)
-  const pairAddressesPrevRef = useRef<`0x${string}`[]>([]);
   const pairAddresses = useMemo(() => {
-    if (!pairAddressQueries.data) {
-      pairAddressesPrevRef.current = [];
-      return [];
-    }
-    const newAddresses = pairAddressQueries.data
-      .map((result) => result.result as `0x${string}` | undefined)
-      .filter((addr): addr is `0x${string}` => addr !== undefined && addr !== "0x0000000000000000000000000000000000000000");
-    
-    // Compare arrays by content, not reference
-    const addressesMatch = newAddresses.length === pairAddressesPrevRef.current.length &&
-      newAddresses.every((addr, i) => addr.toLowerCase() === pairAddressesPrevRef.current[i]?.toLowerCase());
-    
-    if (!addressesMatch) {
-      pairAddressesPrevRef.current = newAddresses;
-    }
-    
-    return pairAddressesPrevRef.current;
-  }, [pairAddressQueries.data]);
+    return (pairAddressesData || [])
+      .map((res) => res.result as string | undefined)
+      .filter((addr): addr is string => !!addr && addr !== "0x0000000000000000000000000000000000000000")
+      .map(addr => getAddress(addr));
+  }, [pairAddressesData]);
 
-  // Query token0 and token1 for each pair (only refetch when pairs change)
-  const tokenQueries = useReadContracts({
+  // 4. Fetch token0/token1 for all pairs in another batch
+  const { data: tokensData, isLoading: loadingTokens, isError: tokensError } = useReadContracts({
     contracts: pairAddresses.flatMap((pairAddr) => [
-      {
-        address: pairAddr,
-        abi: PAIR_ABI,
-        functionName: "token0",
-      },
-      {
-        address: pairAddr,
-        abi: PAIR_ABI,
-        functionName: "token1",
-      },
+      { address: pairAddr, abi: PAIR_ABI, functionName: "token0" },
+      { address: pairAddr, abi: PAIR_ABI, functionName: "token1" },
     ]),
-    query: { 
+    query: {
       enabled: pairAddresses.length > 0,
-      // Only refetch when pair addresses change, not on interval
-      refetchInterval: false,
-      retry: 3, // Retry up to 3 times on failure
-      retryDelay: 1000, // Wait 1 second between retries
-      placeholderData: (previousData) => previousData, // Keep old data when refetching
+      staleTime: Infinity, // Pair tokens NEVER change
     },
   });
 
-  // Process pairs data
+  // 5. Final processing with stabilization
   const pairs = useMemo(() => {
-    if (!tokenQueries.data || pairAddresses.length === 0) return [];
+    if (!tokensData || tokensData.length === 0) return [];
 
-    const result: Array<{
-      pairKey: string;
-      tokenSymbol: string;
-      tokenAddress: `0x${string}`;
-      tokenDecimals: number;
-      quoteSymbol: string;
-      quoteAddress: `0x${string}`;
-      quoteDecimals: number;
-      pairAddress: `0x${string}`;
-      tokenConfig?: { symbol: string; icon: string; decimals: number };
-      quoteConfig?: { symbol: string; icon: string; decimals: number };
-    }> = [];
-
+    const result = [];
     for (let i = 0; i < pairAddresses.length; i++) {
-      const pairAddr = pairAddresses[i];
-      const token0Idx = i * 2;
-      const token1Idx = i * 2 + 1;
+      const t0 = tokensData[i * 2]?.result as `0x${string}`;
+      const t1 = tokensData[i * 2 + 1]?.result as `0x${string}`;
+      if (!t0 || !t1) continue;
 
-      const token0 = tokenQueries.data[token0Idx]?.result as `0x${string}` | undefined;
-      const token1 = tokenQueries.data[token1Idx]?.result as `0x${string}` | undefined;
+      const config0 = getTokenConfigByAddress(t0);
+      const config1 = getTokenConfigByAddress(t1);
 
-      if (!token0 || !token1) continue;
+      // Even if unknown, we show it (Scientific approach: trust the chain)
+      const t0Info = config0 || { symbol: `T0-${t0.slice(0, 6)}`, decimals: 18, icon: "", address: t0 };
+      const t1Info = config1 || { symbol: `T1-${t1.slice(0, 6)}`, decimals: 18, icon: "", address: t1 };
 
-      const token0Config = getTokenConfigByAddress(token0);
-      const token1Config = getTokenConfigByAddress(token1);
-
-      // Skip if both tokens are unknown (but allow if at least one is known)
-      // This prevents showing pairs with completely unknown tokens
-      if (!token0Config && !token1Config) continue;
-
-      // Determine which is token and which is quote
-      // Rule: Token in DEX_TOKEN_OPTIONS is always the "token", others are "quote"
-      // If both are in DEX_TOKEN_OPTIONS or both are not, sort by address (token0 < token1)
-      const token0InDexOptions = token0Config && DEX_TOKEN_OPTIONS.some(t => t.address.toLowerCase() === token0.toLowerCase());
-      const token1InDexOptions = token1Config && DEX_TOKEN_OPTIONS.some(t => t.address.toLowerCase() === token1.toLowerCase());
-      
-      let tokenConfig, quoteConfig;
-      if (token0InDexOptions && !token1InDexOptions) {
-        // token0 is in DEX_TOKEN_OPTIONS, token1 is quote
-        tokenConfig = token0Config!;
-        quoteConfig = token1Config || { symbol: "UNKNOWN", icon: "", decimals: 18, address: token1 };
-      } else if (token1InDexOptions && !token0InDexOptions) {
-        // token1 is in DEX_TOKEN_OPTIONS, token0 is quote
-        tokenConfig = token1Config!;
-        quoteConfig = token0Config || { symbol: "UNKNOWN", icon: "", decimals: 18, address: token0 };
-      } else {
-        // Both in DEX_TOKEN_OPTIONS or both not - sort by address (token0 < token1)
-        // token0 is always first (smaller address)
-        tokenConfig = token0Config || { symbol: "UNKNOWN", icon: "", decimals: 18, address: token0 };
-        quoteConfig = token1Config || { symbol: "UNKNOWN", icon: "", decimals: 18, address: token1 };
-      }
+      // Determine quote/token based on common sense (USDC/EURC are quotes)
+      const isT1Quote = t1Info.symbol === "USDC" || t1Info.symbol === "EURC";
+      const [tokenInfo, quoteInfo] = isT1Quote ? [t0Info, t1Info] : [t1Info, t0Info];
 
       result.push({
-        pairKey: `${tokenConfig.symbol}/${quoteConfig.symbol}`,
-        tokenSymbol: tokenConfig.symbol,
-        tokenAddress: tokenConfig.address as `0x${string}`,
-        tokenDecimals: tokenConfig.decimals,
-        quoteSymbol: quoteConfig.symbol,
-        quoteAddress: quoteConfig.address as `0x${string}`,
-        quoteDecimals: quoteConfig.decimals,
-        pairAddress: pairAddr,
-        tokenConfig: { symbol: tokenConfig.symbol, icon: tokenConfig.icon, decimals: tokenConfig.decimals },
-        quoteConfig: { symbol: quoteConfig.symbol, icon: quoteConfig.icon, decimals: quoteConfig.decimals },
+        pairKey: `${tokenInfo.symbol}/${quoteInfo.symbol}`,
+        tokenSymbol: tokenInfo.symbol,
+        tokenAddress: tokenInfo.address as `0x${string}`,
+        tokenDecimals: tokenInfo.decimals,
+        quoteSymbol: quoteInfo.symbol,
+        quoteAddress: quoteInfo.address as `0x${string}`,
+        quoteDecimals: quoteInfo.decimals,
+        pairAddress: pairAddresses[i],
+        tokenConfig: tokenInfo,
+        quoteConfig: quoteInfo
       });
     }
-
     return result;
-  }, [tokenQueries.data, pairAddresses]);
+  }, [tokensData, pairAddresses]);
 
-  // Full loading flag - only false when ALL data is loaded
-  const fullLoading = pairsLength === undefined || 
-    pairAddressQueries.isLoading || 
-    tokenQueries.isLoading;
-
-  // Keep pairs stable during refetch (anti-flicker)
-  const stablePairsRef = useRef<typeof pairs>([]);
+  // Prevent UI flickering by keeping last valid state
+  const lastValidPairs = useRef(pairs);
   useEffect(() => {
-    if (pairs.length > 0) {
-      stablePairsRef.current = pairs;
-    }
+    if (pairs.length > 0) lastValidPairs.current = pairs;
   }, [pairs]);
 
-  // Return stable pairs when loading (prevents flicker) or use current pairs when loaded
-  const stablePairs = fullLoading && stablePairsRef.current.length > 0 
-    ? stablePairsRef.current 
-    : pairs;
+  const isLoading = (pairsLength === undefined && !lengthError) || loadingAddresses || loadingTokens;
 
   return {
-    pairs: stablePairs,
-    isLoading: fullLoading,
-    isError: pairAddressQueries.isError || tokenQueries.isError,
+    pairs: pairs.length > 0 ? pairs : lastValidPairs.current,
+    isLoading,
+    isError: lengthError || addressesError || tokensError
   };
 }
 
-function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbol, quoteAddress, quoteDecimals, pairAddress, tokenConfig, quoteConfig, isLast }: { 
-  pairKey: string;
-  tokenSymbol: string; 
-  tokenAddress: `0x${string}`; 
+function PoolRow({ tokenSymbol, tokenAddress, tokenDecimals, quoteSymbol, quoteAddress, quoteDecimals, pairAddress, tokenConfig, quoteConfig, isLast }: {
+  tokenSymbol: string;
+  tokenAddress: `0x${string}`;
   tokenDecimals: number;
   quoteSymbol: string;
   quoteAddress: `0x${string}`;
@@ -367,7 +273,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
     address: pairAddress as `0x${string}` | undefined,
     abi: PAIR_ABI,
     functionName: "getReserves",
-    query: { enabled: Boolean(pairAddress), refetchInterval: false },
+    query: { enabled: Boolean(pairAddress), refetchInterval: 10000 },
   });
 
   // Get token0/token1
@@ -404,94 +310,112 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
   });
 
   // Parse reserves and calculate TVL
-  const { reserveQuote, reserveToken, reserveQuoteRaw, reserveTokenRaw, tvl, hasPosition, price } = useMemo(() => {
-    if (!reserves || !token0) {
-      return { 
-        reserveQuote: "0", 
-        reserveToken: "0", 
+  const poolStats = useMemo(() => {
+    if (!reserves || !token0 || !pairAddress) {
+      return {
+        reserveQuote: "0",
+        reserveToken: "0",
         reserveQuoteRaw: "0",
         reserveTokenRaw: "0",
-        tvl: "0", 
+        tvl: "0",
         hasPosition: false,
         price: "0"
       };
     }
 
-    const isQuoteToken0 = (token0 as string).toLowerCase() === quoteAddress.toLowerCase();
-    const reservesArray = reserves as Reserves | null;
-    const reserve0 = reservesArray?.[0] ?? BigInt(0);
-    const reserve1 = reservesArray?.[1] ?? BigInt(0);
+    try {
+      const isQuoteToken0 = getAddress(token0 as string).toLowerCase() === getAddress(quoteAddress).toLowerCase();
+      const reservesArray = reserves as unknown as Reserves;
+      if (!reservesArray) throw new Error("No reserves");
 
-    const reserveQuoteRawBig = isQuoteToken0 ? reserve0 : reserve1;
-    const reserveTokenRawBig = isQuoteToken0 ? reserve1 : reserve0;
+      const res0 = reservesArray[0];
+      const res1 = reservesArray[1];
 
-    const reserveQuote = formatUnits(reserveQuoteRawBig, quoteDecimals);
-    const reserveToken = formatUnits(reserveTokenRawBig, tokenDecimals);
+      const resQuoteRaw = isQuoteToken0 ? res0 : res1;
+      const resTokenRaw = isQuoteToken0 ? res1 : res0;
 
-    // TVL = 2 * reserveQuote (assuming 1 EURC = 1 USD)
-    const tvlNum = Number(reserveQuote) * 2;
-    const tvl = tvlNum >= 1000 ? `${(tvlNum / 1000).toFixed(2)}K` : tvlNum.toFixed(2);
-    const tvlFormatted = tvlNum >= 1000000 ? `${(tvlNum / 1000000).toFixed(2)}M` : tvl;
+      const resQuote = formatUnits(resQuoteRaw, quoteDecimals);
+      const resToken = formatUnits(resTokenRaw, tokenDecimals);
 
-    const hasPosition = lpBalance && (lpBalance as bigint) > BigInt(0);
+      // TVL = 2 * reserveQuote (in USD equivalent)
+      const tvlNum = Number(resQuote) * 2;
+      const tvlFormatted = tvlNum >= 1000000
+        ? `${(tvlNum / 1000000).toFixed(2)}M`
+        : tvlNum >= 1000
+          ? `${(tvlNum / 1000).toFixed(2)}K`
+          : tvlNum.toFixed(2);
 
-    const formatReserve = (val: string) => {
-      const num = Number(val);
-      if (num >= 1000000) return `${(num / 1000000).toFixed(2)}M`;
-      if (num >= 1000) return `${(num / 1000).toFixed(2)}K`;
-      return num.toFixed(2);
-    };
+      const hasPos = lpBalance && (lpBalance as bigint) > BigInt(0);
 
-    // Calculate price: 1 EURC = X token
-    const reserveQuoteNum = Number(reserveQuote);
-    const reserveTokenNum = Number(reserveToken);
-    const price = reserveQuoteNum > 0 ? reserveTokenNum / reserveQuoteNum : 0;
+      const formatValue = (val: string) => {
+        const num = Number(val);
+        if (num >= 1000000) return `${(num / 1000000).toFixed(2)}M`;
+        if (num >= 1000) return `${(num / 1000).toFixed(2)}K`;
+        return num.toFixed(2);
+      };
 
-    return {
-      reserveQuote: formatReserve(reserveQuote),
-      reserveToken: formatReserve(reserveToken),
-      reserveQuoteRaw: reserveQuote,
-      reserveTokenRaw: reserveToken,
-      tvl: tvlFormatted,
-      hasPosition: Boolean(hasPosition),
-      price: price.toFixed(6),
-    };
-  }, [reserves, token0, tokenDecimals, lpBalance]);
+      const resQuoteNum = Number(resQuote);
+      const resTokenNum = Number(resToken);
+      const calculatedPrice = resQuoteNum > 0 ? resTokenNum / resQuoteNum : 0;
+
+      return {
+        reserveQuote: formatValue(resQuote),
+        reserveToken: formatValue(resToken),
+        reserveQuoteRaw: resQuote,
+        reserveTokenRaw: resToken,
+        tvl: tvlFormatted,
+        hasPosition: Boolean(hasPos),
+        price: calculatedPrice.toFixed(6),
+      };
+    } catch (e) {
+      return {
+        reserveQuote: "0",
+        reserveToken: "0",
+        reserveQuoteRaw: "0",
+        reserveTokenRaw: "0",
+        tvl: "0",
+        hasPosition: false,
+        price: "0"
+      };
+    }
+  }, [reserves, token0, tokenDecimals, lpBalance, quoteAddress, quoteDecimals, pairAddress]);
+
+  const { reserveQuote, reserveToken, reserveQuoteRaw, reserveTokenRaw, tvl, hasPosition, price } = poolStats;
 
   // Get balances
   const { data: quoteBalance } = useBalance({
     address,
-    token: quoteAddress,
-    query: { enabled: Boolean(address), refetchInterval: false },
+    token: quoteAddress ? getAddress(quoteAddress) : undefined,
+    query: { enabled: Boolean(address && quoteAddress), refetchInterval: 15000 },
   });
   const { data: tokenBalance } = useBalance({
     address,
-    token: tokenAddress,
-    query: { enabled: Boolean(address), refetchInterval: false },
+    token: tokenAddress ? getAddress(tokenAddress) : undefined,
+    query: { enabled: Boolean(address && tokenAddress), refetchInterval: 15000 },
   });
 
   // Get allowances
   const { data: quoteAllowance, refetch: refetchQuoteAllowance } = useReadContract({
-    address: quoteAddress,
+    address: quoteAddress ? getAddress(quoteAddress) : undefined,
     abi: ERC20_ALLOWANCE_ABI,
     functionName: "allowance",
-    args: address && ROUTER_ADDRESS ? [address, ROUTER_ADDRESS] : undefined,
-    query: { enabled: Boolean(address && ROUTER_ADDRESS), refetchInterval: false },
+    args: address && ROUTER_ADDRESS ? [address, getAddress(ROUTER_ADDRESS)] : undefined,
+    query: { enabled: Boolean(address && ROUTER_ADDRESS && quoteAddress), refetchInterval: false },
   });
   const { data: tokenAllowance, refetch: refetchTokenAllowance } = useReadContract({
-    address: tokenAddress,
+    address: tokenAddress ? getAddress(tokenAddress) : undefined,
     abi: ERC20_ALLOWANCE_ABI,
     functionName: "allowance",
-    args: address && ROUTER_ADDRESS ? [address, ROUTER_ADDRESS] : undefined,
-    query: { enabled: Boolean(address && ROUTER_ADDRESS), refetchInterval: false },
+    args: address && ROUTER_ADDRESS ? [address, getAddress(ROUTER_ADDRESS)] : undefined,
+    query: { enabled: Boolean(address && ROUTER_ADDRESS && tokenAddress), refetchInterval: false },
   });
 
   // Get LP token allowance
   const { data: lpAllowance, refetch: refetchLPAllowance } = useReadContract({
-    address: pairAddress as `0x${string}` | undefined,
+    address: pairAddress ? getAddress(pairAddress) : undefined,
     abi: ERC20_ALLOWANCE_ABI,
     functionName: "allowance",
-    args: address && ROUTER_ADDRESS && pairAddress ? [address, ROUTER_ADDRESS] : undefined,
+    args: address && ROUTER_ADDRESS && pairAddress ? [address, getAddress(ROUTER_ADDRESS)] : undefined,
     query: { enabled: Boolean(address && ROUTER_ADDRESS && pairAddress), refetchInterval: false },
   });
 
@@ -505,38 +429,39 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
   const lpBalanceFmt = lpBalance ? formatUnits(lpBalance as bigint, 18) : "0";
 
   // Calculate expected amounts when removing liquidity
-  const { expectedEURC, expectedToken } = useMemo(() => {
-    if (!amountLP || !reserves || !token0 || !lpTotalSupply || amountLP === "" || Number(amountLP) <= 0) {
-      return { expectedEURC: "0", expectedToken: "0" };
+  const expectedAmounts = useMemo(() => {
+    if (!amountLP || !reserves || !token0 || !lpTotalSupply || Number(amountLP) <= 0) {
+      return { expectedQuote: "0", expectedToken: "0" };
     }
 
     try {
       const lpAmount = parseUnits(amountLP, 18);
       const totalSupply = lpTotalSupply as bigint;
-      if (totalSupply === BigInt(0)) {
-        return { expectedEURC: "0", expectedToken: "0" };
-      }
+      if (totalSupply === BigInt(0)) return { expectedQuote: "0", expectedToken: "0" };
 
-      const isQuoteToken0 = (token0 as string).toLowerCase() === quoteAddress.toLowerCase();
+      const isQuoteToken0 = getAddress(token0 as string).toLowerCase() === getAddress(quoteAddress).toLowerCase();
       const reservesArray = reserves as Reserves | null;
-      const reserve0 = reservesArray?.[0] ?? BigInt(0);
-      const reserve1 = reservesArray?.[1] ?? BigInt(0);
+      if (!reservesArray) return { expectedQuote: "0", expectedToken: "0" };
 
-      const reserveQuoteRawBig = isQuoteToken0 ? reserve0 : reserve1;
-      const reserveTokenRawBig = isQuoteToken0 ? reserve1 : reserve0;
+      const res0 = reservesArray[0];
+      const res1 = reservesArray[1];
 
-      // Calculate proportional amounts
-      const expectedEURCRaw = (lpAmount * reserveQuoteRawBig) / totalSupply;
-      const expectedTokenRaw = (lpAmount * reserveTokenRawBig) / totalSupply;
+      const resQuoteRaw = isQuoteToken0 ? res0 : res1;
+      const resTokenRaw = isQuoteToken0 ? res1 : res0;
+
+      const expectedQuoteRaw = (lpAmount * resQuoteRaw) / totalSupply;
+      const expectedTokenRaw = (lpAmount * resTokenRaw) / totalSupply;
 
       return {
-        expectedEURC: formatUnits(expectedEURCRaw, quoteDecimals),
+        expectedQuote: formatUnits(expectedQuoteRaw, quoteDecimals),
         expectedToken: formatUnits(expectedTokenRaw, tokenDecimals),
       };
     } catch {
-      return { expectedEURC: "0", expectedToken: "0" };
+      return { expectedQuote: "0", expectedToken: "0" };
     }
-  }, [amountLP, reserves, token0, lpTotalSupply, tokenDecimals]);
+  }, [amountLP, reserves, token0, lpTotalSupply, tokenDecimals, quoteDecimals, quoteAddress]);
+
+  const { expectedQuote: expectedEURC, expectedToken } = expectedAmounts;
 
   // Reset approval flags when amounts change significantly
   useEffect(() => {
@@ -565,10 +490,10 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
   useEffect(() => {
     if (!reserveQuoteRaw || !reserveTokenRaw || reserveQuoteRaw === "0" || reserveTokenRaw === "0") return;
     if (!editingField) return;
-    
+
     const reserveQuoteNum = Number(reserveQuoteRaw);
     const reserveTokenNum = Number(reserveTokenRaw);
-    
+
     if (editingField === "eurc" && amountEURC !== prevAmountEURC.current) {
       prevAmountEURC.current = amountEURC;
       if (!amountEURC || amountEURC === "") {
@@ -601,11 +526,16 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
     if (approvedEURCReady) return false;
     try {
       const needed = parseUnits(amountEURC, quoteDecimals);
-      return needed > BigInt(0) && (quoteAllowance as bigint) < needed;
+      return needed > BigInt(0) && (quoteAllowance as bigint) < latestAllowanceThreshold(needed);
     } catch {
       return false;
     }
   }, [amountEURC, quoteAllowance, approvedEURCReady, quoteDecimals]);
+
+  // Small helper to avoid flickering with minimal dust
+  function latestAllowanceThreshold(needed: bigint) {
+    return needed;
+  }
 
   const needsTokenApproval = useMemo(() => {
     if (!amountToken || tokenAllowance === undefined) return false;
@@ -616,7 +546,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
     } catch {
       return false;
     }
-  }, [amountToken, tokenAllowance, approvedTokenReady]);
+  }, [amountToken, tokenAllowance, approvedTokenReady, tokenDecimals]);
 
   const needsLPApproval = useMemo(() => {
     if (!amountLP || lpAllowance === undefined || !pairAddress) return false;
@@ -651,10 +581,10 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
       processedTxHash.current = null; // Reset for new tx
       setLastAction("approve-eurc");
       writeContract({
-        address: quoteAddress,
+        address: getAddress(quoteAddress),
         abi: ERC20_APPROVE_ABI,
         functionName: "approve",
-        args: [ROUTER_ADDRESS, amount],
+        args: [getAddress(ROUTER_ADDRESS), amount],
       });
       toast.loading(`Approving ${quoteSymbol}...`, { id: "approve-eurc", duration: Infinity });
     } catch (e) {
@@ -668,10 +598,10 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
       processedTxHash.current = null; // Reset for new tx
       setLastAction("approve-token");
       writeContract({
-        address: tokenAddress,
+        address: getAddress(tokenAddress),
         abi: ERC20_APPROVE_ABI,
         functionName: "approve",
-        args: [ROUTER_ADDRESS, amount],
+        args: [getAddress(ROUTER_ADDRESS), amount],
       });
       toast.loading(`Approving ${tokenSymbol}...`, { id: "approve-token", duration: Infinity });
     } catch (e) {
@@ -686,10 +616,10 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
       processedTxHash.current = null; // Reset for new tx
       setLastAction("approve-lp");
       writeContract({
-        address: pairAddress,
+        address: getAddress(pairAddress),
         abi: ERC20_APPROVE_ABI,
         functionName: "approve",
-        args: [ROUTER_ADDRESS, amount],
+        args: [getAddress(ROUTER_ADDRESS), amount],
       });
       toast.loading("Approving LP tokens...", { id: "approve-lp", duration: Infinity });
     } catch (e) {
@@ -699,6 +629,10 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
   };
 
   const handleRemoveLiquidity = async () => {
+    if (!address) {
+      toast.error("Wallet not connected");
+      return;
+    }
     if (!amountLP || !pairAddress) {
       toast.error("Enter LP amount");
       return;
@@ -706,35 +640,42 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
 
     try {
       const amtLP = parseUnits(amountLP, 18);
-      
-      // Validate LP amount
       if (amtLP <= BigInt(0)) {
-        toast.error("LP amount must be greater than 0");
+        toast.error("Amount must be > 0");
         return;
       }
-      
+
       // Check balance
       if (!lpBalance || amtLP > (lpBalance as bigint)) {
         toast.error("Insufficient LP balance");
         return;
       }
 
-      // Determine token order: token0 < token1 (by address)
-      const isToken0 = BigInt(tokenAddress) < BigInt(quoteAddress);
-      const tokenA = isToken0 ? tokenAddress : quoteAddress;
-      const tokenB = isToken0 ? quoteAddress : tokenAddress;
+      const t0 = getAddress(tokenAddress);
+      const q0 = getAddress(quoteAddress);
+      const isToken0 = BigInt(t0) < BigInt(q0);
+      const tokenA = isToken0 ? t0 : q0;
+      const tokenB = isToken0 ? q0 : t0;
 
-      processedTxHash.current = null; // Reset for new tx
+      processedTxHash.current = null;
       setLastAction("remove-liquidity");
+
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+      const amtTokenMin = (parseUnits(expectedToken || "0", tokenDecimals) * BigInt(95)) / BigInt(100);
+      const amtQuoteMin = (parseUnits(expectedEURC || "0", quoteDecimals) * BigInt(95)) / BigInt(100);
+
+      const amountAMin = isToken0 ? amtTokenMin : amtQuoteMin;
+      const amountBMin = isToken0 ? amtQuoteMin : amtTokenMin;
+
       writeContract({
-        address: ROUTER_ADDRESS,
+        address: getAddress(ROUTER_ADDRESS),
         abi: ROUTER_ABI,
         functionName: "removeLiquidity",
-        args: [tokenA, tokenB, amtLP],
+        args: [tokenA, tokenB, amtLP, amountAMin, amountBMin, address, deadline],
       });
       toast.loading("Removing liquidity...", { id: "remove-liquidity" });
     } catch (e: unknown) {
-      const error = e as { message?: string } | null;
+      const error = e as Error;
       toast.error(error?.message || "Remove liquidity failed");
       setLastAction(null);
     }
@@ -748,13 +689,13 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
 
     try {
       const amtLP = parseUnits(amountLP, 18);
-      
+
       // Validate LP amount
       if (amtLP <= BigInt(0)) {
         toast.error("LP amount must be greater than 0");
         return;
       }
-      
+
       // Check balance
       if (!lpBalance || amtLP > (lpBalance as bigint)) {
         toast.error("Insufficient LP balance");
@@ -780,8 +721,13 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
     }
   };
 
-  // Helper function to execute add liquidity
+  // Final execution of Add Liquidity
   const executeAddLiquidity = async () => {
+    const userAddr = address; // Local copy to avoid closure issues
+    if (!userAddr) {
+      toast.error("Wallet not connected");
+      return;
+    }
     if (!amountEURC || !amountToken) {
       toast.error("Enter both amounts");
       return;
@@ -791,24 +737,42 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
       const amtQuote = parseUnits(amountEURC, quoteDecimals);
       const amtToken = parseUnits(amountToken, tokenDecimals);
 
-      // Determine token order: token0 < token1 (by address)
-      const isToken0 = BigInt(tokenAddress) < BigInt(quoteAddress);
-      const tokenA = isToken0 ? tokenAddress : quoteAddress;
-      const tokenB = isToken0 ? quoteAddress : tokenAddress;
-      const amountA = isToken0 ? amtToken : amtQuote;
-      const amountB = isToken0 ? amtQuote : amtToken;
+      const t0 = getAddress(tokenAddress);
+      const q0 = getAddress(quoteAddress);
+      const is_token0 = BigInt(t0) < BigInt(q0);
 
-      processedTxHash.current = null; // Reset for new tx
+      const tokenA = is_token0 ? t0 : q0;
+      const tokenB = is_token0 ? q0 : t0;
+      const amountA = is_token0 ? amtToken : amtQuote;
+      const amountB = is_token0 ? amtQuote : amtToken;
+
+      const amountAMin = (amountA * BigInt(95)) / BigInt(100);
+      const amountBMin = (amountB * BigInt(95)) / BigInt(100);
+      const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+
+      processedTxHash.current = null;
       setLastAction("add-liquidity");
+      setPendingAddLiquidity(false);
+
       writeContract({
-        address: ROUTER_ADDRESS,
+        address: getAddress(ROUTER_ADDRESS),
         abi: ROUTER_ABI,
         functionName: "addLiquidity",
-        args: [tokenA, tokenB, amountA, amountB],
+        args: [
+          tokenA,
+          tokenB,
+          amountA,
+          amountB,
+          amountAMin,
+          amountBMin,
+          userAddr, // Guaranteed address
+          deadline,
+        ],
       });
-      toast.loading("Adding liquidity...", { id: "add-liquidity" });
-    } catch (e) {
-      toast.error("Operation failed");
+      toast.loading("Adding Liquidity...", { id: "add-liquidity" });
+    } catch (e: unknown) {
+      const error = e as Error;
+      toast.error(error?.message || "Add failed");
       setLastAction(null);
     }
   };
@@ -824,131 +788,62 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
       const amtQuote = parseUnits(amountEURC, quoteDecimals);
       const amtToken = parseUnits(amountToken, tokenDecimals);
 
-      // Refetch allowances to get latest values
+      // Always refetch allowances to be safe
       const [quoteAllowanceResult, tokenAllowanceResult] = await Promise.all([
-        refetchQuoteAllowance().catch(() => ({ data: quoteAllowance })),
-        refetchTokenAllowance().catch(() => ({ data: tokenAllowance })),
+        refetchQuoteAllowance(),
+        refetchTokenAllowance(),
       ]);
 
-      const latestQuoteAllowance = (quoteAllowanceResult?.data ?? quoteAllowance) as bigint | undefined;
-      const latestTokenAllowance = (tokenAllowanceResult?.data ?? tokenAllowance) as bigint | undefined;
+      const latestQuoteAllowance = quoteAllowanceResult?.data || quoteAllowance;
+      const latestTokenAllowance = tokenAllowanceResult?.data || tokenAllowance;
 
-      // Check if Quote token needs approval
-      if (!approvedEURCReady && (!latestQuoteAllowance || latestQuoteAllowance < amtQuote)) {
+      // Approval checks
+      if (!approvedEURCReady && (!latestQuoteAllowance || (latestQuoteAllowance as bigint) < amtQuote)) {
         setPendingAddLiquidity(true);
         await handleApproveQuote(amtQuote);
-        return; // Wait for approval to complete
+        return;
       }
 
-      // Check if Token needs approval
-      if (!approvedTokenReady && (!latestTokenAllowance || latestTokenAllowance < amtToken)) {
+      if (!approvedTokenReady && (!latestTokenAllowance || (latestTokenAllowance as bigint) < amtToken)) {
         setPendingAddLiquidity(true);
         await handleApproveToken(amtToken);
-        return; // Wait for approval to complete
+        return;
       }
 
-      // Both approved, proceed to add liquidity
       await executeAddLiquidity();
-    } catch (e) {
-      toast.error("Operation failed");
+    } catch (e: unknown) {
+      const error = e as Error;
+      toast.error(error?.message || "Operation failed");
       setLastAction(null);
     }
   };
 
-  const handleAddLiquidity = async () => {
-    if (!amountEURC || !amountToken) {
-      toast.error("Enter both amounts");
-      return;
-    }
-    
-    // Double-check allowances before proceeding
-    try {
-      const amtQuote = parseUnits(amountEURC, quoteDecimals);
-      const amtToken = parseUnits(amountToken, tokenDecimals);
-      
-      // Always refetch allowances to get latest values from chain
-      const [quoteAllowanceResult, tokenAllowanceResult] = await Promise.all([
-        refetchQuoteAllowance().catch(() => ({ data: quoteAllowance })),
-        refetchTokenAllowance().catch(() => ({ data: tokenAllowance })),
-      ]);
-      
-      // Get latest allowance values from refetch results, fallback to current values
-      const latestQuoteAllowance = (quoteAllowanceResult?.data ?? quoteAllowance) as bigint | undefined;
-      const latestTokenAllowance = (tokenAllowanceResult?.data ?? tokenAllowance) as bigint | undefined;
-      
-      // Check if allowances are sufficient (check actual allowance, not just flags)
-      // If flag is true, we trust it. Otherwise check actual allowance value.
-      const quoteAllowanceOK = approvedEURCReady || (latestQuoteAllowance && latestQuoteAllowance >= amtQuote);
-      const tokenAllowanceOK = approvedTokenReady || (latestTokenAllowance && latestTokenAllowance >= amtToken);
-      
-      if (!quoteAllowanceOK) {
-        toast.error(`${quoteSymbol} allowance insufficient. Please approve ${quoteSymbol} first.`);
-        return;
-      }
-      if (!tokenAllowanceOK) {
-        toast.error(`${tokenSymbol} allowance insufficient. Please approve ${tokenSymbol} first.`);
-        return;
-      }
-      
-      // Determine token order: token0 < token1 (by address)
-      const isToken0 = BigInt(tokenAddress) < BigInt(quoteAddress);
-      const tokenA = isToken0 ? tokenAddress : quoteAddress;
-      const tokenB = isToken0 ? quoteAddress : tokenAddress;
-      const amountA = isToken0 ? amtToken : amtQuote;
-      const amountB = isToken0 ? amtQuote : amtToken;
-      
-      processedTxHash.current = null; // Reset for new tx
-      setLastAction("add-liquidity");
-      writeContract({
-        address: ROUTER_ADDRESS,
-        abi: ROUTER_ABI,
-        functionName: "addLiquidity",
-        args: [tokenA, tokenB, amountA, amountB],
-      });
-      toast.loading("Adding liquidity...", { id: "add-liquidity" });
-    } catch (e) {
-      toast.error("Add liquidity failed");
-      setLastAction(null);
-    }
-  };
+
 
   // Handle tx confirmation
   useEffect(() => {
     if (!isConfirmed || !lastAction || !txHash) return;
     if (isPending || isConfirming) return;
     if (processedTxHash.current === txHash) return; // Already processed
-    
+
     processedTxHash.current = txHash;
-    
+
     if (lastAction === "approve-eurc") {
       toast.dismiss("approve-eurc");
       setApprovedEURCReady(true);
-      // Refetch allowance multiple times to ensure we get the updated value
-      // Arc RPC sometimes delays indexing, so fetch multiple times
       refetchQuoteAllowance();
-      setTimeout(() => refetchQuoteAllowance(), 500);
-      setTimeout(() => refetchQuoteAllowance(), 1500);
       setLastAction(null);
-      // If pending add liquidity, continue after a short delay
+      toast.success(`${quoteSymbol} approved!`);
       if (pendingAddLiquidity) {
-        setTimeout(() => {
-          executeAddLiquidity();
-        }, 2000);
+        setTimeout(() => handleApproveAndAddLiquidity(), 2000); // 2s delay for testnet sync
       }
     } else if (lastAction === "approve-token") {
       toast.dismiss("approve-token");
       setApprovedTokenReady(true);
-      // Refetch allowance multiple times to ensure we get the updated value
-      // Arc RPC sometimes delays indexing, so fetch multiple times
       refetchTokenAllowance();
-      setTimeout(() => refetchTokenAllowance(), 500);
-      setTimeout(() => refetchTokenAllowance(), 1500);
       setLastAction(null);
-      // If pending add liquidity, continue after a short delay
       if (pendingAddLiquidity) {
-        setTimeout(() => {
-          executeAddLiquidity();
-        }, 2000);
+        setTimeout(() => handleApproveAndAddLiquidity(), 2000); // 2s delay for testnet sync
       }
     } else if (lastAction === "approve-lp") {
       toast.dismiss("approve-lp");
@@ -993,7 +888,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
         </div>,
         { id: "add-liquidity-success", duration: 5000 }
       );
-      
+
       // Refetch data to update UI
       refetchReserves();
       refetchLPBalance();
@@ -1006,7 +901,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
         refetchReserves();
         refetchLPBalance();
       }, 3000);
-      
+
       if (showForm) {
         setShowForm(false);
         setAmountEURC("");
@@ -1031,7 +926,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
         </div>,
         { id: "remove-liquidity-success", duration: 5000 }
       );
-      
+
       // Refetch data to update UI
       refetchReserves();
       refetchLPBalance();
@@ -1044,7 +939,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
         refetchReserves();
         refetchLPBalance();
       }, 3000);
-      
+
       if (showForm) {
         setShowForm(false);
         setAmountLP("");
@@ -1052,7 +947,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
       }
       setLastAction(null);
     }
-  }, [isPending, isConfirming, isConfirmed, lastAction, txHash, showForm, tokenSymbol, refetchQuoteAllowance, refetchTokenAllowance, refetchLPAllowance, pendingAddLiquidity, executeAddLiquidity, handleRemoveLiquidity, refetchReserves, refetchLPBalance, quoteSymbol]);
+  }, [isPending, isConfirming, isConfirmed, lastAction, txHash, showForm, tokenSymbol, refetchQuoteAllowance, refetchTokenAllowance, refetchLPAllowance, pendingAddLiquidity, handleApproveAndAddLiquidity, handleRemoveLiquidity, refetchReserves, refetchLPBalance, quoteSymbol]);
 
   return (
     <>
@@ -1109,7 +1004,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
 
       {/* Add/Remove Liquidity Modal */}
       {showForm && (
-        <div 
+        <div
           className="fixed inset-0 backdrop-blur flex items-center justify-center z-50"
           onClick={() => {
             setShowForm(false);
@@ -1122,7 +1017,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
             setActiveTab("add");
           }}
         >
-          <div 
+          <div
             className="bg-secondary rounded-lg shadow-xl border-custom-2 max-w-lg w-full p-6"
             onClick={(e) => e.stopPropagation()}
           >
@@ -1154,10 +1049,10 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
                 {/* Token Icons */}
                 <div className="flex -space-x-2">
                   <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold text-sm relative z-10">
-                    {QUOTE_TOKEN.icon ? (
-                      <img src={QUOTE_TOKEN.icon} alt={QUOTE_SYMBOL} className="w-full h-full rounded-full" />
+                    {quoteConfig?.icon ? (
+                      <img src={quoteConfig.icon} alt={quoteSymbol} className="w-full h-full rounded-full" />
                     ) : (
-                      <span>€</span>
+                      <span>{quoteSymbol[0]}</span>
                     )}
                   </div>
                   <div className="w-10 h-10 rounded-full bg-yellow-500 flex items-center justify-center text-white font-bold text-xs relative z-0">
@@ -1182,21 +1077,19 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
             <div className="flex gap-2 mt-4 mb-5">
               <button
                 onClick={() => setActiveTab("add")}
-                className={`flex-1 py-2 px-4 rounded-t-lg font-medium transition-colors ${
-                  activeTab === "add"
-                    ? "bg-active text-black"
-                    : "bg-secondary text-white hover-bg-custom"
-                }`}
+                className={`flex-1 py-2 px-4 rounded-t-lg font-medium transition-colors ${activeTab === "add"
+                  ? "bg-active text-black"
+                  : "bg-secondary text-white hover-bg-custom"
+                  }`}
               >
                 Add
               </button>
               <button
                 onClick={() => setActiveTab("remove")}
-                className={`flex-1 py-2 px-4 rounded-t-lg font-medium transition-colors ${
-                  activeTab === "remove"
-                    ? "bg-active text-black"
-                    : "bg-secondary text-white hover-bg-custom"
-                }`}
+                className={`flex-1 py-2 px-4 rounded-t-lg font-medium transition-colors ${activeTab === "remove"
+                  ? "bg-active text-black"
+                  : "bg-secondary text-white hover-bg-custom"
+                  }`}
               >
                 Remove
               </button>
@@ -1406,9 +1299,9 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
                     className="w-full px-4 py-2 bg-active text-black rounded-lg hover:opacity-90 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed mt-5"
                   >
                     {isPending || isConfirming ? (
-                      lastAction === "approve-eurc" ? "Approving EURC..." :
-                      lastAction === "approve-token" ? `Approving ${tokenSymbol}...` :
-                      "Processing..."
+                      lastAction === "approve-eurc" ? `Approving ${quoteSymbol}...` :
+                        lastAction === "approve-token" ? `Approving ${tokenSymbol}...` :
+                          "Processing..."
                     ) : !amountEURC || !amountToken || Number(amountEURC) <= 0 || Number(amountToken) <= 0 ? (
                       "Enter Amounts"
                     ) : hasInsufficientBalance ? (
@@ -1437,10 +1330,10 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
                           {/* Token Icons - Overlapping */}
                           <div className="flex -space-x-2">
                             <div className="w-[30px] h-[30px] rounded-full bg-blue-500 flex items-center justify-center relative z-10">
-                              {QUOTE_TOKEN.icon ? (
-                                <img src={QUOTE_TOKEN.icon} alt={QUOTE_SYMBOL} className="w-full h-full rounded-full" />
+                              {quoteConfig?.icon ? (
+                                <img src={quoteConfig.icon} alt={quoteSymbol} className="w-full h-full rounded-full" />
                               ) : (
-                                <span className="text-xs text-white">€</span>
+                                <span className="text-xs text-white">{quoteSymbol[0]}</span>
                               )}
                             </div>
                             <div className="w-[30px] h-[30px] rounded-full bg-yellow-500 flex items-center justify-center relative z-0">
@@ -1451,7 +1344,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
                               )}
                             </div>
                           </div>
-                          <span className="font-medium text-white">{QUOTE_SYMBOL} / {tokenSymbol}</span>
+                          <span className="font-medium text-white">{quoteSymbol} / {tokenSymbol}</span>
                         </div>
                         {/* Input field */}
                         <input
@@ -1560,7 +1453,7 @@ function PoolRow({ pairKey, tokenSymbol, tokenAddress, tokenDecimals, quoteSymbo
                   >
                     {isPending || isConfirming ? (
                       lastAction === "approve-lp" ? "Approving LP..." :
-                      "Processing..."
+                        "Processing..."
                     ) : !amountLP || Number(amountLP) <= 0 ? (
                       "Enter Amount"
                     ) : Number(amountLP) > Number(lpBalanceFmt) ? (
@@ -1647,8 +1540,7 @@ export default function Liquidity() {
                 const isLastItem = shouldHideLastBorder && isLastRow;
                 return (
                   <PoolRow
-                    key={pair.pairKey}
-                    pairKey={pair.pairKey}
+                    key={pair.pairAddress}
                     tokenSymbol={pair.tokenSymbol}
                     tokenAddress={pair.tokenAddress}
                     tokenDecimals={pair.tokenDecimals}

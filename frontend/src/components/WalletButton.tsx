@@ -5,7 +5,6 @@ import { useEffect, useState, useRef } from 'react';
 import toast from 'react-hot-toast';
 
 const ARC_TESTNET_CHAIN_ID = 5042002;
-const ARC_EXPLORER_URL = 'https://testnet.arcscan.app';
 
 export const WalletButton = () => {
   const { address, isConnected, chainId } = useAccount();
@@ -51,11 +50,11 @@ export const WalletButton = () => {
     // Only show toast once when network is wrong
     if (isConnected && chainId && chainId !== ARC_TESTNET_CHAIN_ID && !toastShownRef.current) {
       toastShownRef.current = true;
-      
+
       if (switchChain) {
         try {
           switchChain({ chainId: ARC_TESTNET_CHAIN_ID });
-        } catch (error) {
+        } catch {
           // Show toast notification when network is wrong
           toast.error(
             <div className="flex flex-col gap-1">
@@ -104,8 +103,8 @@ export const WalletButton = () => {
   }
 
   if (isConnected) {
-    const isCorrectNetwork = chainId === ARC_TESTNET_CHAIN_ID;
-    
+
+
     return (
       <div className="flex items-center gap-2">
         {/* Wallet Address Button */}
@@ -118,65 +117,64 @@ export const WalletButton = () => {
               {address?.slice(0, 6)}...{address?.slice(-4)}
             </div>
           </button>
-        
-        {isDropdownOpen && (
-          <div className="absolute right-0 mt-2 w-52 bg-secondary rounded-lg shadow-lg border border-custom-2 z-50">
-            <div className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-sm text-white font-semibold">Wallet Address</span>
-                <button
-                  onClick={() => setIsDropdownOpen(false)}
-                  className="text-gray-400 hover:text-white"
-                >
-                  ✕
-                </button>
-              </div>
-              
-              <div className="flex items-center gap-2 mb-3 p-2 bg-secondary-2 rounded border border-custom-2">
-                <span className="font-mono text-sm flex-1 text-white">
-                  {address?.slice(0, 6)}...{address?.slice(-4)}
-                </span>
-                <button
-                  onClick={copyAddress}
-                  className={`p-1 transition-all ${
-                    copied 
-                      ? 'text-green-400 scale-110' 
-                      : 'text-gray-400 hover:text-white'
-                  }`}
-                  title="Copy address"
-                >
-                  <img 
-                    src="/copy.svg" 
-                    alt="Copy" 
-                    className={`w-4 h-4 transition-transform ${copied ? 'scale-110' : ''}`}
-                  />
-                </button>
-              </div>
-              
-              {chainId !== ARC_TESTNET_CHAIN_ID && (
-                <div className="mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-gray-700">
-                  ⚠️ Wrong network. Please switch to Arc Testnet.
+
+          {isDropdownOpen && (
+            <div className="absolute right-0 mt-2 w-52 bg-secondary rounded-lg shadow-lg border border-custom-2 z-50">
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm text-white font-semibold">Wallet Address</span>
                   <button
-                    onClick={() => switchChain({ chainId: ARC_TESTNET_CHAIN_ID })}
-                    className="block w-full mt-2 bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-medium py-1 px-2 rounded"
+                    onClick={() => setIsDropdownOpen(false)}
+                    className="text-gray-400 hover:text-white"
                   >
-                    Switch to Arc Testnet
+                    ✕
                   </button>
                 </div>
-              )}
-              
-              <button
-                onClick={() => {
-                  disconnect();
-                  setIsDropdownOpen(false);
-                }}
-                className="w-full bg-red-500 hover:bg-red-600 text-white text-sm font-medium py-2 px-4 rounded"
-              >
-                Disconnect
-              </button>
+
+                <div className="flex items-center gap-2 mb-3 p-2 bg-secondary-2 rounded border border-custom-2">
+                  <span className="font-mono text-sm flex-1 text-white">
+                    {address?.slice(0, 6)}...{address?.slice(-4)}
+                  </span>
+                  <button
+                    onClick={copyAddress}
+                    className={`p-1 transition-all ${copied
+                        ? 'text-green-400 scale-110'
+                        : 'text-gray-400 hover:text-white'
+                      }`}
+                    title="Copy address"
+                  >
+                    <img
+                      src="/copy.svg"
+                      alt="Copy"
+                      className={`w-4 h-4 transition-transform ${copied ? 'scale-110' : ''}`}
+                    />
+                  </button>
+                </div>
+
+                {chainId !== ARC_TESTNET_CHAIN_ID && (
+                  <div className="mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-gray-700">
+                    ⚠️ Wrong network. Please switch to Arc Testnet.
+                    <button
+                      onClick={() => switchChain({ chainId: ARC_TESTNET_CHAIN_ID })}
+                      className="block w-full mt-2 bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-medium py-1 px-2 rounded"
+                    >
+                      Switch to Arc Testnet
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => {
+                    disconnect();
+                    setIsDropdownOpen(false);
+                  }}
+                  className="w-full bg-red-500 hover:bg-red-600 text-white text-sm font-medium py-2 px-4 rounded"
+                >
+                  Disconnect
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
         </div>
       </div>
     );

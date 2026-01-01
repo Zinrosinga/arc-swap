@@ -8,7 +8,7 @@ const hardhatEthers = (hre as typeof hre & { ethers: HardhatEthers }).ethers;
 
 const TOKEN_A_SYMBOL = "NBC";
 const TOKEN_B_SYMBOL = "EURC";
-const TOKEN_A_AMOUNT = "5000"; // expressed in whole tokens
+const TOKEN_A_AMOUNT = "500"; // expressed in whole tokens
 const TOKEN_B_AMOUNT = "5"; // expressed in whole tokens
 
 async function main() {
@@ -77,11 +77,11 @@ async function main() {
   // Check balances
   const tokenABalance = await tokenAContract.balanceOf(deployer.address);
   const tokenBBalance = await tokenBContract.balanceOf(deployer.address);
-  
+
   console.log(`\nCurrent balances:`);
   console.log(`  ${TOKEN_A_SYMBOL}: ${hardhatEthers.formatUnits(tokenABalance, tokenADecimals)}`);
   console.log(`  ${TOKEN_B_SYMBOL}: ${hardhatEthers.formatUnits(tokenBBalance, tokenBDecimals)}`);
-  
+
   if (tokenABalance < tokenAAmount) {
     throw new Error(`Insufficient ${TOKEN_A_SYMBOL} balance. Have: ${hardhatEthers.formatUnits(tokenABalance, tokenADecimals)}, Need: ${TOKEN_A_AMOUNT}`);
   }
@@ -97,7 +97,20 @@ async function main() {
   console.log("✅ Approvals complete");
 
   console.log("\nAdding liquidity via router...");
-  const tx = await router.addLiquidity(tokenAAddress, tokenBAddress, tokenAAmount, tokenBAmount);
+  const deadline = Math.floor(Date.now() / 1000) + 1200; // 20 minutes from now
+  const amountAMin = (tokenAAmount * 95n) / 100n; // 5% slippage
+  const amountBMin = (tokenBAmount * 95n) / 100n; // 5% slippage
+
+  const tx = await router.addLiquidity(
+    tokenAAddress,
+    tokenBAddress,
+    tokenAAmount,
+    tokenBAmount,
+    amountAMin,
+    amountBMin,
+    deployer.address,
+    deadline
+  );
   const receipt = await tx.wait();
   const event = receipt?.logs?.length ? "Liquidity added" : "Liquidity tx sent";
   console.log(`✅ ${event}. Tx hash: ${receipt?.hash ?? "unknown"}`);
